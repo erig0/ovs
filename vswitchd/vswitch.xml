@@ -352,6 +352,24 @@
           Defaults to 100 ie. there is (1/100 =) 1% chance of EMC insertion.
         </p>
       </column>
+
+      <column name="other_config" key="vlan-limit"
+              type='{"type": "integer", "minInteger": 0}'>
+        <p>
+          Limit the maxmium of VLAN headers that can be matched. Further VLAN
+          headers will be treated as payload, e.g. a packet with more 802.1q
+          headers will match eth_type 0x8100.
+        </p>
+        <p>
+          Value <code>0</code> means unlimited. The actual value of max VLAN
+          headers is the minumium of <code>vlan-limit</code>, the max VLANs
+          supported by Open vSwitch userspace (currently 2), and that supported
+          by datapath.
+        </p>
+        <p>
+          The default value is 1, to keep backward compatibility.
+        </p>
+      </column>
     </group>
 
     <group title="Status">

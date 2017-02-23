@@ -3,6 +3,7 @@ Post-v2.7.0
    - Tunnels:
      * Added support to set packet mark for tunnel endpoint using
        `egress_pkt_mark` OVSDB option.
+     * New dot1q-tunnel (CVLAN) type via 802.1ad support.
    - EMC insertion probability is reduced to 1% and is configurable via
      the new 'other_config:emc-insert-inv-prob' option.
    - ovs-ofctl:

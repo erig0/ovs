@@ -3433,34 +3433,101 @@ dpif_netlink_flow_from_ofpbuf(struct dpif_netlink_flow *flow,
 }
 
 
+static bool
+put_exclude_packet_type(struct ofpbuf *buf, uint16_t type,
+                        const struct nlattr *data, uint16_t data_len,
+                        const struct nlattr *packet_type)
+{
+    ovs_assert(NLA_ALIGN(packet_type->nla_len) == NL_A_U32_SIZE);
+    size_t packet_type_len = NL_A_U32_SIZE;
+    size_t first_chunk_size = (uint8_t *)packet_type - (uint8_t *)data;
+    size_t second_chunk_size = data_len - first_chunk_size
+                               - packet_type_len;
+    uint8_t *first_attr = NULL;
+    struct nlattr *next_attr = nl_attr_next(packet_type);
+
+    bool ethernet_present = nl_attr_find__(data, data_len,
+                                           OVS_KEY_ATTR_ETHERNET);
+
+    first_attr = nl_msg_put_unspec_uninit(buf, type,
+                                          data_len - packet_type_len);
+    memcpy(first_attr, data, first_chunk_size);
+    memcpy(first_attr + first_chunk_size, next_attr, second_chunk_size);
+
+    return ethernet_present;
+}
+
 /*
- * If PACKET_TYPE attribute is present in 'data', it filters PACKET_TYPE out,
- * then puts 'data' to 'buf'.
+ * If PACKET_TYPE attribute is present in 'data', converts it to ETHERNET and
+ * ETHERTYPE attributes, then puts 'data' to 'buf'.
  */
 static void
-put_exclude_packet_type(struct ofpbuf *buf, uint16_t type,
-                        const struct nlattr *data, uint16_t data_len)
+put_convert_packet_type(struct ofpbuf *buf,
+                        const struct dpif_netlink_flow *flow)
 {
     const struct nlattr *packet_type;
+    const struct nlattr *data = flow->key;
+    uint16_t data_len = flow->key_len;
+    const struct nlattr *mask_data = flow->mask;
+    uint16_t mask_len = flow->mask_len;
+    ovs_be32 value = htonl(PT_ETH);
+    bool ethernet_present = false;
 
-    packet_type = nl_attr_find__(data, data_len, OVS_KEY_ATTR_PACKET_TYPE);
+    /* Verify KEY attributes.  */
+    if (data_len) {
+        packet_type = nl_attr_find__(data, data_len, OVS_KEY_ATTR_PACKET_TYPE);
+        if (packet_type) {
+            /* Convert PACKET_TYPE Netlink attribute. */
+            value = nl_attr_get_be32(packet_type);
+            ethernet_present = put_exclude_packet_type(buf, OVS_FLOW_ATTR_KEY,
+                                                       data, data_len,
+                                                       packet_type);
+            /* Put OVS_KEY_ATTR_ETHERTYPE if needed. */
+            if (ntohl(value) == PT_ETH) {
+                ovs_assert(ethernet_present);
+            } else {
+                const struct nlattr *eth_type;
+                ovs_be16 ns_type = pt_ns_type_be(value);
 
-    if (packet_type) {
-        /* exclude PACKET_TYPE Netlink attribute. */
-        ovs_assert(NLA_ALIGN(packet_type->nla_len) == NL_A_U32_SIZE);
-        size_t packet_type_len = NL_A_U32_SIZE;
-        size_t first_chunk_size = (uint8_t *)packet_type - (uint8_t *)data;
-        size_t second_chunk_size = data_len - first_chunk_size
-                                   - packet_type_len;
-        uint8_t *first_attr = NULL;
-        struct nlattr *next_attr = nl_attr_next(packet_type);
+                ovs_assert(ethernet_present == false);
 
-        first_attr = nl_msg_put_unspec_uninit(buf, type,
-                                              data_len - packet_type_len);
-        memcpy(first_attr, data, first_chunk_size);
-        memcpy(first_attr + first_chunk_size, next_attr, second_chunk_size);
-    } else {
-        nl_msg_put_unspec(buf, type, data, data_len);
+                eth_type = nl_attr_find__(data, data_len,
+                                          OVS_KEY_ATTR_ETHERTYPE);
+                if (eth_type) {
+                    ovs_assert(nl_attr_get_be16(eth_type) == ns_type);
+                } else {
+                    nl_msg_put_be16(buf, OVS_KEY_ATTR_ETHERTYPE, ns_type);
+                }
+            }
+        } else {
+            nl_msg_put_unspec(buf, OVS_FLOW_ATTR_KEY, data, data_len);
+        }
+    }
+
+    /* Verify MASK attributes. */
+    if (mask_len) {
+        packet_type = nl_attr_find__(mask_data, mask_len,
+                                     OVS_KEY_ATTR_PACKET_TYPE);
+        if (packet_type) {
+            /* Convert PACKET_TYPE Netlink attribute. */
+            ethernet_present = put_exclude_packet_type(buf, OVS_FLOW_ATTR_MASK,
+                                                       mask_data, mask_len,
+                                                       packet_type);
+            /* Put OVS_KEY_ATTR_ETHERTYPE if needed. */
+            if (ntohl(value) != PT_ETH) {
+                const struct nlattr *eth_type;
+
+                ovs_assert(ethernet_present == false);
+
+                eth_type = nl_attr_find__(mask_data, mask_len,
+                                          OVS_KEY_ATTR_ETHERTYPE);
+                if (!eth_type) {
+                    nl_msg_put_be16(buf, OVS_KEY_ATTR_ETHERTYPE, OVS_BE16_MAX);
+                }
+            }
+        } else {
+            nl_msg_put_unspec(buf, OVS_FLOW_ATTR_MASK, mask_data, mask_len);
+        }
     }
 }
 
@@ -3488,14 +3555,7 @@ dpif_netlink_flow_to_ofpbuf(const struct dpif_netlink_flow *flow,
                        | OVS_UFID_F_OMIT_ACTIONS);
     }
     if (!flow->ufid_terse || !flow->ufid_present) {
-        if (flow->key_len) {
-            put_exclude_packet_type(buf, OVS_FLOW_ATTR_KEY, flow->key,
-                                           flow->key_len);
-        }
-        if (flow->mask_len) {
-            put_exclude_packet_type(buf, OVS_FLOW_ATTR_MASK, flow->mask,
-                                           flow->mask_len);
-        }
+        put_convert_packet_type(buf, flow);
         if (flow->actions || flow->actions_len) {
             nl_msg_put_unspec(buf, OVS_FLOW_ATTR_ACTIONS,
                               flow->actions, flow->actions_len);

@@ -3434,31 +3434,47 @@ dpif_netlink_flow_from_ofpbuf(struct dpif_netlink_flow *flow,
 
 
 /*
- * If PACKET_TYPE attribute is present in 'data', it filters PACKET_TYPE out,
- * then puts 'data' to 'buf'.
+ * If PACKET_TYPE attribute is present in 'data', it filters PACKET_TYPE out.
+ * If the flow is not Ethernet, packet_type is converted to ETHERTYPE.
+ * Puts 'data' to 'buf'.
  */
 static void
 put_exclude_packet_type(struct ofpbuf *buf, uint16_t type,
-                        const struct nlattr *data, uint16_t data_len)
+                        const struct nlattr *data, size_t data_len)
 {
     const struct nlattr *packet_type;
 
     packet_type = nl_attr_find__(data, data_len, OVS_KEY_ATTR_PACKET_TYPE);
 
     if (packet_type) {
-        /* exclude PACKET_TYPE Netlink attribute. */
-        ovs_assert(NLA_ALIGN(packet_type->nla_len) == NL_A_U32_SIZE);
-        size_t packet_type_len = NL_A_U32_SIZE;
-        size_t first_chunk_size = (uint8_t *)packet_type - (uint8_t *)data;
-        size_t second_chunk_size = data_len - first_chunk_size
-                                   - packet_type_len;
-        uint8_t *first_attr = NULL;
-        struct nlattr *next_attr = nl_attr_next(packet_type);
+        struct odputil_keybuf new_attrs_buf;
+        const struct nlattr *ethernet;
+        struct nlattr *new_attrs;
+        size_t new_attrs_len;
 
-        first_attr = nl_msg_put_unspec_uninit(buf, type,
-                                              data_len - packet_type_len);
-        memcpy(first_attr, data, first_chunk_size);
-        memcpy(first_attr + first_chunk_size, next_attr, second_chunk_size);
+        new_attrs = (struct nlattr *) &new_attrs_buf;
+        memcpy(new_attrs, data, data_len);
+        new_attrs_len = data_len;
+
+        nl_attr_filter(new_attrs, &new_attrs_len, OVS_KEY_ATTR_PACKET_TYPE);
+
+        /* If it's not Ethernet, then we need to override or add the Ethertype
+         * with the one from the packet_type. */
+        ethernet = nl_attr_find__(data, data_len, OVS_KEY_ATTR_ETHERNET);
+        if (!ethernet) {
+            ovs_be32 packet_type_value = nl_attr_get_be32(packet_type);
+            struct ofpbuf new_buf;
+
+            nl_attr_filter(new_attrs, &new_attrs_len, OVS_KEY_ATTR_ETHERTYPE);
+
+            ofpbuf_use_stack(&new_buf, new_attrs, sizeof new_attrs_buf);
+            nl_msg_put_uninit(&new_buf, new_attrs_len);
+            nl_msg_put_be16(&new_buf, OVS_KEY_ATTR_ETHERTYPE,
+                            pt_ns_type_be(packet_type_value));
+            new_attrs_len = new_buf.size;
+        }
+
+        nl_msg_put_unspec(buf, type, new_attrs, new_attrs_len);
     } else {
         nl_msg_put_unspec(buf, type, data, data_len);
     }

@@ -927,3 +927,23 @@ nl_attr_find_nested(const struct nlattr *nla, uint16_t type)
 {
     return nl_attr_find__(nl_attr_get(nla), nl_attr_get_size(nla), type);
 }
+
+/*
+ * Filter nlattr type from set of nlattrs.
+ * This changes the data in place. So caller should make a copy if required.
+ */
+void
+nl_attr_filter(struct nlattr *attrs, size_t *attrs_len, uint16_t type)
+{
+    size_t size = *attrs_len;
+    struct nlattr *nla;
+    size_t left;
+
+    NL_ATTR_FOR_EACH (nla, left, attrs, size) {
+        if (nl_attr_type(nla) == type) {
+            *attrs_len -= nl_attr_len_pad(nla, left);
+            memmove(nla, nl_attr_next(nla), left - nl_attr_len_pad(nla, left));
+            return;
+        }
+    }
+}

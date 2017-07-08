@@ -240,5 +240,6 @@ const struct nlattr *nl_attr_find(const struct ofpbuf *, size_t hdr_len,
 const struct nlattr *nl_attr_find_nested(const struct nlattr *, uint16_t type);
 const struct nlattr *nl_attr_find__(const struct nlattr *attrs, size_t size,
                                     uint16_t type);
+void nl_attr_filter(struct nlattr *attrs, size_t *attrs_len, uint16_t type);
 
 #endif /* netlink.h */

@@ -121,3 +121,11 @@ m4_define([CHECK_CT_DPIF_SET_GET_MAXCONNS])
 # Perform requirements checks for running ovs-dpctl ct-get-nconns. The
 # userspace datapath does support this feature.
 m4_define([CHECK_CT_DPIF_GET_NCONNS])
+
+# OVS_CHECK_GRE6()
+#
+# Userspace always supports GREv6, but the tests need host support.
+#
+m4_define([OVS_CHECK_GRE6],
+    [AT_SKIP_IF([! ip link add foo type ip6gretap help 2>&1 | grep ip6gretap >/dev/null])
+     OVS_CHECK_FIREWALL()])

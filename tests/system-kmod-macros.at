@@ -123,3 +123,12 @@ m4_define([CHECK_CT_DPIF_GET_NCONNS],
 [
     AT_SKIP_IF([:])
 ])
+
+# OVS_CHECK_GRE6()
+#
+# OVS does not yet support GREv6 in the kernel datapath, so always skip.
+#
+m4_define([OVS_CHECK_GRE6],
+[
+    AT_SKIP_IF([:])
+])

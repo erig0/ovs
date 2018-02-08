@@ -115,6 +115,10 @@ netdev_tnl_ip_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
         *hlen += IP_HEADER_LEN;
 
     } else if (IP_VER(ip->ip_ihl_ver) == 6) {
+        const void *ip6_data;
+        size_t ip6_size;
+        uint8_t nw_proto;
+        uint8_t nw_frag;
         ovs_be32 tc_flow = get_16aligned_be32(&ip6->ip6_flow);
 
         memcpy(tnl->ipv6_src.s6_addr, ip6->ip6_src.be16, sizeof ip6->ip6_src);
@@ -124,6 +128,20 @@ netdev_tnl_ip_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
         tnl->ip_ttl = ip6->ip6_hlim;
 
         *hlen += IPV6_HEADER_LEN;
+
+        ip6_data = ip6 + 1;
+        ip6_size = l3_size - IPV6_HEADER_LEN;
+        nw_proto = ip6->ip6_nxt;
+        nw_frag = 0;
+
+        if (!parse_ipv6_ext_hdrs(&ip6_data, &ip6_size, &nw_proto, &nw_frag) ||
+            nw_frag != 0) {
+            VLOG_WARN_RL(&err_rl,
+                         "ipv6 packet has unsupported extension headers");
+            return NULL;
+        }
+
+        *hlen += l3_size - IPV6_HEADER_LEN - ip6_size;
 
     } else {
         VLOG_WARN_RL(&err_rl, "ipv4 packet has invalid version (%d)",
